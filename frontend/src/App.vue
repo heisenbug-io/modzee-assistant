@@ -6,21 +6,19 @@
       </div>
     </header>
 
-    <main class="p-6 grid gap-6 lg:grid-cols-2 max-w-8xl mx-auto">
+    <main class="p-6 grid gap-6 lg:grid-cols-1 max-w-7xl mx-auto">
       <ChatAssistant />
-      <ReportAssistant />
+
     </main>
   </div>
 </template>
 
 <script>
 import ChatAssistant from './components/ChatAssistant.vue';
-import ReportAssistant from './components/ReportAssistant.vue';
 
 export default {
   components: {
     ChatAssistant,
-    ReportAssistant,
   },
 };
 </script>

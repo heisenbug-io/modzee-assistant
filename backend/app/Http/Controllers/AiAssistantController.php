@@ -4,14 +4,15 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use App\Models\AiLog;
 use Carbon\Carbon;
 
 class AiAssistantController extends Controller
 {
     public function handle(Request $request)
     {
-        // Validate the input
         $validator = Validator::make($request->all(), [
             'prompt' => 'required|string',
         ]);
@@ -21,109 +22,90 @@ class AiAssistantController extends Controller
         }
 
         $prompt = $request->input('prompt');
-        $apiKey = config('services.openai.key'); // Reads from .env
+        $apiKey = config('services.gemini.key');
 
-        // Prepare request payload for OpenAI API
-        $data = [
-            'model' => 'gpt-3.5-turbo', // Change to 'gpt-4' if available
-            'messages' => [
-                ['role' => 'user', 'content' => $prompt],
-            ],
-        ];
+        // 🔁 Fetch entire conversation history from DB (in order)
+        $logs = AiLog::orderBy('created_at')->get();
 
-        // Make the API call to OpenAI
-        $response = Http::withHeaders([
-            'Authorization' => "Bearer {$apiKey}",
-            'Content-Type'  => 'application/json',
-        ])->post('https://api.openai.com/v1/chat/completions', $data);
+        $conversation = [];
 
-        if ($response->failed()) {
-            return response()->json(['error' => 'OpenAI API request failed'], 500);
-        }
-
-        $result = $response->json();
-        $reply = $result['choices'][0]['message']['content'] ?? 'No reply available';
-        $timestamp = Carbon::now()->toDateTimeString();
-
-        return response()->json([
-            'reply'     => $reply,
-            'timestamp' => $timestamp,
-        ]);
-    }
-
-    public function report(Request $request)
-    {
-        // Check for dynamic data input; use it if provided, else fallback to dummy dataset.
-        $data = $request->input('data');
-        if (!$data) {
-            $data = [
-                [
-                    "employee_id" => "E001",
-                    "name" => "Jane Doe",
-                    "team" => "Sales",
-                    "engagement_score" => 78,
-                    "training_completion" => 100,
-                    "attendance_rate" => 92,
-                ],
-                [
-                    "employee_id" => "E002",
-                    "name" => "John Smith",
-                    "team" => "Sales",
-                    "engagement_score" => 65,
-                    "training_completion" => 80,
-                    "attendance_rate" => 85,
-                ],
-                [
-                    "employee_id" => "E003",
-                    "name" => "Sara Khan",
-                    "team" => "Sales",
-                    "engagement_score" => 50,
-                    "training_completion" => 60,
-                    "attendance_rate" => 70,
-                ],
+        foreach ($logs as $log) {
+            $conversation[] = [
+                'role' => 'user',
+                'parts' => [['text' => $log->prompt]],
+            ];
+            $conversation[] = [
+                'role' => 'model',
+                'parts' => [['text' => $log->reply]],
             ];
         }
 
-        // Optional: Validate that $data is an array.
-        if (!is_array($data)) {
-            return response()->json(['error' => 'Data must be an array'], 400);
-        }
-
-        // Format the data as a pretty-printed JSON string.
-        $jsonData = json_encode($data, JSON_PRETTY_PRINT);
-
-        // Create a structured prompt for the AI.
-        $prompt = "Given this JSON data:\n$jsonData\n\nSummarize any concerning trends for management.";
-
-        $apiKey = config('services.openai.key'); // Reads from .env
-
-        // Prepare the payload for the OpenAI API.
-        $payload = [
-            'model' => 'gpt-3.5-turbo',
-            'messages' => [
-                ['role' => 'user', 'content' => $prompt],
-            ],
+        // ➕ Add new user prompt
+        $conversation[] = [
+            'role' => 'user',
+            'parts' => [['text' => $prompt]],
         ];
 
-        // Make the API call.
+        $payload = [
+            'contents' => $conversation,
+        ];
+
         $response = Http::withHeaders([
-            'Authorization' => "Bearer {$apiKey}",
-            'Content-Type'  => 'application/json',
-        ])->post('https://api.openai.com/v1/chat/completions', $payload);
+            'Content-Type'     => 'application/json',
+            'X-goog-api-key'   => $apiKey,
+        ])->post('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent', $payload);
 
         if ($response->failed()) {
-            return response()->json(['error' => 'OpenAI API request failed'], 500);
+            Log::error('Gemini API request failed', [
+                'status' => $response->status(),
+                'body'   => $response->body(),
+                'prompt' => $prompt,
+            ]);
+            return response()->json(['error' => 'Gemini API request failed'], 500);
         }
 
         $result = $response->json();
-        $summary = $result['choices'][0]['message']['content'] ?? 'No summary available';
+        $reply = $result['candidates'][0]['content']['parts'][0]['text'] ?? 'No reply available';
 
-        // OPTIONAL: Log the request and response (if you set up a logging table).
-        // AiLog::create([
-        //     'prompt' => $prompt,
-        //     'reply'  => $summary,
-        // ]);
+        // ✅ Store new entry in DB
+        AiLog::create([
+            'prompt' => $prompt,
+            'reply'  => $reply,
+        ]);
 
-        return response()->json(['summary' => $summary]);
+        return response()->json([
+            'reply'     => $reply,
+            'timestamp' => now()->toDateTimeString(),
+        ]);
+    }
+
+    public function reset(Request $request)
+    {
+        // 🧹 Clear all history from DB
+        AiLog::truncate();
+
+        return response()->json(['message' => 'Conversation reset']);
+    }
+
+    public function logs()
+    {
+        $logs = \App\Models\AiLog::orderBy('created_at')->get();
+
+        $conversation = [];
+
+        foreach ($logs as $log) {
+            $conversation[] = [
+                'role' => 'user',
+                'text' => $log->prompt,
+                'timestamp' => $log->created_at->toDateTimeString(),
+            ];
+            $conversation[] = [
+                'role' => 'model',
+                'text' => $log->reply,
+                'timestamp' => $log->created_at->toDateTimeString(),
+            ];
+        }
+
+        return response()->json($conversation);
     }
 }
