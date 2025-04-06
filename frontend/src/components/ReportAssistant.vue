@@ -1,22 +1,26 @@
 <template>
-  <div>
-    <h2>Generate Report</h2>
+  <div class="bg-white p-6 rounded-2xl shadow flex flex-col h-full">
+    <h2 class="text-lg font-semibold mb-4">Reporting Assistant</h2>
+
     <textarea
-        v-model="inputData"
-        placeholder="Optional: Enter JSON data to generate report (leave empty to use default dataset)"
-        rows="10"
-        cols="50"
+        v-model="jsonData"
+        rows="6"
+        placeholder="Paste JSON data here (optional)..."
+        class="w-full border rounded-xl p-3 mb-4 bg-gray-50 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
     ></textarea>
-    <br />
-    <button @click="generateReport" :disabled="loading">
-      Generate Report
-    </button>
-    <div v-if="loading">Generating report...</div>
-    <div v-if="error" class="error">{{ error }}</div>
-    <div v-if="report">
-      <h3>Report Summary:</h3>
-      <p>{{ report.summary }}</p>
+
+    <h3 class="font-medium text-sm text-gray-600 mb-1">Summary</h3>
+    <div class="bg-gray-100 text-gray-700 p-4 rounded-xl mb-4 whitespace-pre-wrap">
+      {{ report }}
     </div>
+
+    <button
+        @click="generateReport"
+        :disabled="loading"
+        class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-xl w-full"
+    >
+      {{ loading ? "Generating..." : "Generate Report" }}
+    </button>
   </div>
 </template>
 
@@ -27,37 +31,29 @@ export default {
   name: 'ReportAssistant',
   data() {
     return {
-      inputData: '',
-      report: null,
+      jsonData: '',
+      report: '',
       loading: false,
-      error: null,
     };
   },
   methods: {
     async generateReport() {
-      this.loading = true;
-      this.error = null;
-      this.report = null;
-
       let payload = {};
-      // If inputData is provided, try to parse it as JSON.
-      if (this.inputData.trim()) {
+      if (this.jsonData.trim()) {
         try {
-          payload.data = JSON.parse(this.inputData);
+          payload.data = JSON.parse(this.jsonData);
         } catch (e) {
-          this.error = "Invalid JSON data.";
-          this.loading = false;
+          alert("Invalid JSON format.");
           return;
         }
       }
+
+      this.loading = true;
       try {
-        // Adjust the API URL if needed; here we assume the backend runs on port 8000.
-        const res = await axios.post('http://127.0.0.1:8000/api/ai/report', payload);
-        this.report = res.data;
-      } catch (err) {
-        this.error =
-            err.response?.data?.error ||
-            'An error occurred while generating the report.';
+        const response = await axios.post('http://localhost:8000/api/ai/report', payload);
+        this.report = response.data.summary;
+      } catch (error) {
+        this.report = error.response?.data?.error || 'Failed to generate report.';
       } finally {
         this.loading = false;
       }
@@ -65,9 +61,3 @@ export default {
   },
 };
 </script>
-
-<style scoped>
-.error {
-  color: red;
-}
-</style>
